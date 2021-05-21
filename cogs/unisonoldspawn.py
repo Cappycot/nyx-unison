@@ -6,7 +6,7 @@ from random import randint
 from discord.ext import commands
 from discord.ext.commands import BucketType
 
-from nyx.nyxutils import reply
+from nyxbot.nyxutils import reply
 
 ranks = ["WTF", "R", "SR", "SSR"]
 emoji = [":large_blue_circle:", "<:rare:230893693371023360>",
@@ -230,13 +230,13 @@ def load():
     return True
 
 
-class UnisonOldSpawn:
+class UnisonOldSpawn(commands.Cog):
     def __init__(self, nyx):
         self.nyx = nyx
 
-    @commands.command(aliases=["spawnr"])
+    @commands.command(aliases=["spawnmonsterold"], hidden=True)
     @commands.cooldown(1, 2, BucketType.user)
-    async def spawn(self, ctx, amount: int = 1):
+    async def spawnold(self, ctx, amount: int = 1):
         """Brings forth a rush of salt...
         The amount spawned has to be between 1 and 10 inclusive.
 
