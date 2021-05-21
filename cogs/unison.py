@@ -4,7 +4,6 @@ code is too much trouble to optimize at this point. Thus, I will port and
 implement UTC timing with as little effort as possible. :<
 """
 
-from asyncio import sleep
 from configparser import ConfigParser
 from datetime import datetime
 from io import BytesIO
@@ -14,11 +13,11 @@ from os.path import isdir, isfile, join
 import aiohttp
 from PIL import Image
 from discord import File, Forbidden
-from discord.ext import commands
-from discord.ext.commands import BucketType
+from discord.ext import commands, tasks
+from discord.ext.commands import Cog, BucketType
 
-from nyx.nyxcommands import has_privilege
-from nyx.nyxutils import get_member, get_predicate, list_string, reply
+from nyxbot.nyxcommands import has_privilege
+from nyxbot.nyxutils import get_member, get_predicate, list_string, reply
 
 folder = "unison"
 events_folder = "events"
@@ -36,7 +35,7 @@ reminders = {}
 days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 days_full = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
              "Saturday", "Sunday"]
-elements = ["fire", "water", "wind", "light", "dark", "star", "stellar"]
+elements = ["fire", "water", "wind", "light", "dark", "time", "star", "stellar"]
 times_list_threshold = 10
 
 
@@ -168,7 +167,7 @@ def datetime_match(event: EventTime, time, day, utc_offset):
         # and the event end is beyond the top of the hour.
         day_fit = (day == end_day or day + 7 == end_day) and end_time > 0
     time_fit = time >= 10000 and (
-        start <= time < end or start <= time + 70000 < end) or time == -1
+            start <= time < end or start <= time + 70000 < end) or time == -1
     if not time_fit and time < 10000:
         if start_day != end_day:
             time_fit = time >= start_time or time < end_time
@@ -753,7 +752,7 @@ async def remove_reminders(ctx, *args):
         await reply(ctx, "You don't have any reminders...")
         return
     elif len(args) == 1 and any(
-                    args[0].lower() == a for a in ["all", "everything"]):
+            args[0].lower() == a for a in ["all", "everything"]):
         # Clear all reminders...
         reminders[uid] = {}
         save_reminders(uid)
@@ -806,10 +805,11 @@ async def remove_reminders(ctx, *args):
         await reply(ctx, results)
 
 
-class Unison:
+class Unison(Cog):
     def __init__(self, nyx):
         self.nyx = nyx
-        self.clock_running = False
+        self.clock.start()
+        self.last_minute = -1
 
     @commands.group(aliases=["event"])
     async def events(self, ctx):
@@ -941,23 +941,19 @@ class Unison:
 
     @commands.command()
     @has_privilege(privilege=-1)
-    @commands.cooldown(1, 3, BucketType.default)
     async def checkclock(self, ctx):
-        async with ctx.channel.typing():
-            self.clock_running = False
-            await sleep(3)
-            if self.clock_running:
-                await reply(ctx, "The event clock is still running.")
-            else:
-                self.nyx.loop.create_task(self.clock())
-                await reply(ctx, "The clock was dead, so I started it again.")
+        if self.clock.is_running():
+            await reply(ctx, "The event clock is still running.")
+        else:
+            self.clock.restart()
+            await reply(ctx, "The clock was dead, so I started it again.")
 
-    @commands.command()
+    @commands.command(hidden=True)
     async def gob(self, ctx):
         """GOB GOB"""
         await reply(ctx, "http://bit.ly/2fQLlbB")
 
-    @commands.command(aliases=["bitch"])
+    @commands.command(aliases=["bitch"], hidden=True)
     async def grey(self, ctx):
         await reply(ctx, "http://i.imgur.com/vvDBlmz.png")
 
@@ -998,7 +994,7 @@ class Unison:
             user = ctx.author
 
         rarity = ctx.invoked_with.upper()
-        url = user.avatar_url or user.default_avatar_url
+        url = str(user.avatar_url)  # or user.default_avatar_url
         # print(url)
 
         async with ctx.channel.typing(), aiohttp.ClientSession(
@@ -1033,41 +1029,50 @@ class Unison:
             else:
                 await reply(ctx, "Image loading failed! :<")
 
+    @tasks.loop(seconds=1.0)
     async def clock(self):
-        await self.nyx.wait_until_ready()
-        last_minute = -1
-        while True:
-            await sleep(1)
-            if not self.clock_running:
-                self.clock_running = True
-            d_time = datetime.now()
-            if d_time.minute != last_minute:
-                last_minute = d_time.minute
-                u_time = datetime.utcnow()
-                d_stamp = add_times(time_stamp(d_time), 5)
-                u_stamp = add_times(time_stamp(u_time), 5)
-                # print("Stamps: {} and {}".format(d_stamp, u_stamp))
-                final_reminders = reminders.copy()
-                for uid in final_reminders:
+        d_time = datetime.now()
+        if d_time.minute != self.last_minute:
+            self.last_minute = d_time.minute
+            u_time = datetime.utcnow()
+            d_stamp = add_times(time_stamp(d_time), 5)
+            u_stamp = add_times(time_stamp(u_time), 5)
+            # print("Stamps: {} and {}".format(d_stamp, u_stamp))
+            final_reminders = reminders.copy()
+            for uid in final_reminders:
+                # Changes to discord.py user fetching.
+                listing = fetch_reminders(uid, d_stamp % 10000, False)
+                listing.extend(fetch_reminders(uid, d_stamp, False))
+                listing.extend(fetch_reminders(uid, u_stamp % 10000, True))
+                listing.extend(fetch_reminders(uid, u_stamp, True))
+                if len(listing) > 0:
                     user = self.nyx.get_user(uid)
                     if user is None:
-                        continue
-                    listing = fetch_reminders(uid, d_stamp % 10000, False)
-                    listing.extend(fetch_reminders(uid, d_stamp, False))
-                    listing.extend(fetch_reminders(uid, u_stamp % 10000, True))
-                    listing.extend(fetch_reminders(uid, u_stamp, True))
-                    if len(listing) > 0:
-                        remind_message = ["{}, the ".format(user.name),
-                                          "following events will be up in ",
-                                          "five minutes:"]
-                        for event in listing:
-                            remind_message.extend(
-                                ["\n - ", get_full_name(event.code[:2])])
-                        remind_message = "".join(remind_message)
                         try:
-                            await user.send(remind_message)
-                        except Forbidden:
+                            user = await self.nyx.fetch_user(uid)
+                        except Exception:
                             pass
+                        if user is None:
+                            continue
+                    remind_message = ["{}, the ".format(user.name),
+                                      "following events will be up in ",
+                                      "five minutes:"]
+                    for event in listing:
+                        remind_message.extend(
+                            ["\n - ", get_full_name(event.code[:2])])
+                    remind_message = "".join(remind_message)
+                    try:
+                        await user.send(remind_message)
+                    except Forbidden:
+                        pass
+
+    @clock.before_loop
+    async def before_clock(self):
+        await self.nyx.wait_until_ready()
+
+    @clock.error
+    async def clock_error(self, _):
+        self.clock.restart()
 
 
 def setup(nyx):
