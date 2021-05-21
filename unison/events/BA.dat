@@ -2,10 +2,7 @@
 # These are all listed in EST format.
 # The game automatically changes GB times to EDT format.
 
-#1300-1315
-#1800-1815
-#2100-2115
+1300-1315
+1800-1815
+2100-2115
 
-1200-1215
-1700-1715
-2000-2015

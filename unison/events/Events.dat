@@ -87,29 +87,15 @@ utc = true
 
 [Battle Colosseum]
 daily = true
-disabled = false
+disabled = true
 file = MC.dat
 id = MC
 utc = false
 
 [Mobius Path]
 daily = true
-disabled = false
+disabled = true
 file = MO.dat
 id = MO
 utc = true
-
-[Stage Wtich]
-daily = true
-disabled = true
-file = Wtich.dat
-id = MW
-utc = false
-
-[Queen of Hearts' Judgment 2x Prestige]
-daily = true
-disabled = true
-file = Qurrn.dat
-id = QN
-utc = false
 
